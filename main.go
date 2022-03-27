@@ -21,7 +21,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys"
 	"golang.org/x/crypto/openpgp/clearsign"
 	"golang.org/x/crypto/openpgp/s2k"
 
@@ -30,8 +33,6 @@ import (
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
-	"golang.org/x/oauth2/google"
-	cloudkms "google.golang.org/api/cloudkms/v1"
 
 	"github.com/heptiolabs/google-kms-pgp/kmssigner"
 )
@@ -321,19 +322,21 @@ func getEntity(key string) (*openpgp.Entity, error) {
 	if key == "" {
 		return nil, errors.New("key is required")
 	}
-	// Connect to the Google Cloud KMS API
+	vaultUrl := os.Getenv("AZURE_KEYVAULT_URL")
+	vaultUrl = strings.TrimRight(vaultUrl, "/")
+	// Connect to the Azure Keyvault API
 	ctx := context.Background()
-	oauthClient, err := google.DefaultClient(ctx, cloudkms.CloudPlatformScope)
+	_ = ctx
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not create Google Cloud OAuth client")
+		return nil, errors.Wrap(err, "could not authenticate to Azure")
 	}
-	svc, err := cloudkms.New(oauthClient)
+	svc, err := azkeys.NewClient(vaultUrl, cred, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not create Google Cloud KMS client")
+		return nil, errors.Wrap(err, "could not create Keyvault client")
 	}
-
 	// Initialize a crypto.Signer backed by the configured Cloud KMS key.
-	signer, err := kmssigner.New(svc, key)
+	signer, err := kmssigner.New(svc, cred, key)
 	if err != nil {
 		return nil, errors.Wrap(err, "could not get KMS signer")
 	}

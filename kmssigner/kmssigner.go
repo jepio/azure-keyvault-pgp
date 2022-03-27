@@ -15,19 +15,20 @@
 package kmssigner
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"time"
 
 	"github.com/pkg/errors"
 
-	cloudkms "google.golang.org/api/cloudkms/v1"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys"
+	azcrypto "github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys/crypto"
 )
 
 // Signer extends crypto.Signer to provide more key metadata.
@@ -38,50 +39,46 @@ type Signer interface {
 }
 
 // New returns a crypto.Signer backed by the named Google Cloud KMS key.
-func New(api *cloudkms.Service, name string) (Signer, error) {
-	metadata, err := api.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.Get(name).Do()
+func New(api *azkeys.Client, cred *azidentity.DefaultAzureCredential, name string) (Signer, error) {
+	ctx := context.Background()
+	resp, err := api.GetKey(ctx, name, nil)
 	if err != nil {
-		return nil, errors.WithMessage(err, "could not get key version from Google Cloud KMS API")
+		return nil, errors.WithMessage(err, "could not get key version from Azure Keyvault")
 	}
-	switch metadata.Algorithm {
-	case "RSA_SIGN_PKCS1_2048_SHA256":
-	case "RSA_SIGN_PKCS1_3072_SHA256":
-	case "RSA_SIGN_PKCS1_4096_SHA256":
+	switch *resp.JSONWebKey.KeyType {
+	case azkeys.KeyTypeRSA:
+	case azkeys.KeyTypeRSAHSM:
 	default:
-		return nil, fmt.Errorf("unsupported key algorithm %q", metadata.Algorithm)
+		return nil, fmt.Errorf("unsupported key algorithm %q", *resp.Key.JSONWebKey.KeyType)
 	}
 
-	creationTime, err := time.Parse(time.RFC3339Nano, metadata.CreateTime)
-	if err != nil {
-		return nil, errors.WithMessage(err, "could not parse key creation timestamp")
-	}
+	creationTime := *resp.Properties.CreatedOn
 
-	res, err := api.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.GetPublicKey(name).Do()
+	jwk := resp.JSONWebKey
+	if len(jwk.E) != 3 {
+		return nil, fmt.Errorf("unsupported exponent: %q", jwk.E)
+	}
+	E := (int(jwk.E[0]) << 16) | (int(jwk.E[1]) << 8) | (int(jwk.E[0]) << 0)
+	N := new(big.Int)
+	N.SetBytes(jwk.N)
+	pubkeyRSA := rsa.PublicKey{
+		E: E,
+		N: N,
+	}
+	capi, err := azcrypto.NewClient(*resp.JSONWebKey.ID, cred, nil)
 	if err != nil {
-		return nil, errors.WithMessage(err, "could not get public key from Google Cloud KMS API")
-	}
-	block, _ := pem.Decode([]byte(res.Pem))
-	if block == nil || block.Type != "PUBLIC KEY" {
-		return nil, errors.WithMessage(err, "could not decode public key PEM")
-	}
-	pubkey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, errors.WithMessage(err, "could not parse public key")
-	}
-	pubkeyRSA, ok := pubkey.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.WithMessage(err, "public key was not an RSA key as expected")
+		return nil, errors.WithMessage(err, "failed to create Crypto client")
 	}
 	return &kmsSigner{
-		api:          api,
+		api:          capi,
 		name:         name,
-		pubkey:       *pubkeyRSA,
+		pubkey:       pubkeyRSA,
 		creationTime: creationTime,
 	}, nil
 }
 
 type kmsSigner struct {
-	api          *cloudkms.Service
+	api          *azcrypto.Client
 	name         string
 	pubkey       rsa.PublicKey
 	creationTime time.Time
@@ -103,20 +100,10 @@ func (k *kmsSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) 
 	if len(digest) != sha256.Size {
 		return nil, fmt.Errorf("input digest must be valid SHA-256 hash")
 	}
-	sig, err := k.api.Projects.Locations.KeyRings.CryptoKeys.CryptoKeyVersions.AsymmetricSign(
-		k.name,
-		&cloudkms.AsymmetricSignRequest{
-			Digest: &cloudkms.Digest{
-				Sha256: base64.StdEncoding.EncodeToString(digest),
-			},
-		},
-	).Do()
+	ctx := context.Background()
+	sig, err := k.api.Sign(ctx, azcrypto.SignatureAlgorithmRS256, digest, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "error signing with Google Cloud KMS")
+		return nil, errors.Wrap(err, "error signing with Azure Keyvault")
 	}
-	res, err := base64.StdEncoding.DecodeString(sig.Signature)
-	if err != nil {
-		return nil, errors.WithMessage(err, "invalid Base64 response from Google Cloud KMS AsymmetricSign endpoint")
-	}
-	return res, nil
+	return sig.Result, nil
 }
