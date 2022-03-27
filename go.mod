@@ -1,4 +1,4 @@
-module github.com/heptiolabs/google-kms-pgp
+module github.com/jepio/azure-keyvault-pgp
 
 go 1.18
 

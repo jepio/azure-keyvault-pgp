@@ -34,7 +34,7 @@ import (
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
 
-	"github.com/heptiolabs/google-kms-pgp/kmssigner"
+	"github.com/jepio/azure-keyvault-pgp/kmssigner"
 )
 
 var (
