@@ -1,16 +1,18 @@
-# Google KMS PGP
+# Azure Keyvault PGP
 
-This project lets you create PGP-compatible signatures using [Google Cloud KMS] asymmetric keys.
+This project lets you create PGP-compatible signatures using [Azure Keyvault] asymmetric keys.
 It should be considered experimental.
+
+The code comes from https://github.com/heptiolabs/google-kms-pgp, who figured all of this out. I just rewrote it to use Azure Keyvault. This is **not** an official Microsoft project.
 
 ## Installing
 
 ```console
-$ go get -u -v github.com/heptiolabs/google-kms-pgp
+$ go get -u -v github.com/jepio/azure-keyvault-pgp
 [...]
-$ google-kms-pgp
+$ azure-keyvault-pgp
 
-usage: google-kms-pgp --export|--sign|--clearsign
+usage: azure-keyvault-pgp --export|--sign|--clearsign
   -a, --armor               output in ascii armor
       --clearsign           sign a message in clear text
       --comment string      comment associated with the key
@@ -25,22 +27,23 @@ usage: google-kms-pgp --export|--sign|--clearsign
 
 This binary has two modes of execution:
 
-- `--export`: generates and exports a PGP-compatible public key from a Google Cloud KMS key.
+- `--export`: generates and exports a PGP-compatible public key from a Azure Keyvault key.
 
-- `--sign|--clearsign`: signs input using the Google Cloud KMS key, producing a PGP signature.
+- `--sign|--clearsign`: signs input using the Azure Keyvault key, producing a PGP signature.
 
 ## Usage: Generating a Key
 
 ```console
-$ export GOOGLE_APPLICATION_CREDENTIALS=./path/to/google/credentials.json
+$ az login
+$ export AZURE_KEYVAULT_URL=https://<keyvault-name>.vault.azure.net
 
-$ google-kms-pgp --export \
+$ azure-keyvault-pgp --export \
 								 --name "My User" \
 								 --comment "A comment about my key" \
 								 --email "myuser@example.com" \
 								 --armor \
 								 --output my-public-key.asc \
-								 projects/my-project/locations/my-location/keyRings/my-keyring/cryptoKeys/my-key/cryptoKeyVersions/1
+								 my-key
 
 $ gpg --import my-public-key.asc
 gpg: key 6014DEDCDEC1EF5F: "My User (A comment about my key) <myuser@example.com>" 1 new user ID
@@ -55,12 +58,13 @@ You can import this key into GPG using `gpg --import my-public-key.asc` and opti
 ## Usage: Signing
 
 ```console
-$ export GOOGLE_APPLICATION_CREDENTIALS=./path/to/google/credentials.json
+$ az login
+$ export AZURE_KEYVAULT_URL=https://<keyvault-name>.vault.azure.net
 
-$ google-kms-pgp --sign \
+$ azure-keyvault-pgp --sign \
 								 --detach-sign \
 								 --armor \
-								 --local-user projects/my-project/locations/my-location/keyRings/my-keyring/cryptoKeys/my-key/cryptoKeyVersions/1 \
+								 --local-user my-key \
 								 hello.txt
 
 $ gpg --verify hello.txt.asc hello.txt
@@ -73,4 +77,4 @@ gpg: depth: 1  valid:   5  signed:   5  trust: 5-, 0q, 0n, 0m, 0f, 0u
 gpg: Good signature from "My User (A comment about my key) <myuser@example.com>" [ultimate]
 ```
 
-[Google Cloud KMS]: https://cloud.google.com/kms/
+[Azure Keyvault]: https://azure.microsoft.com/en-us/services/key-vault/
