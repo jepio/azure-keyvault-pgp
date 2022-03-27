@@ -1,6 +1,6 @@
 module github.com/jepio/azure-keyvault-pgp
 
-go 1.18
+go 1.17
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.13.2
