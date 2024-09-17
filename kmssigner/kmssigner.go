@@ -26,9 +26,9 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys"
-	azcrypto "github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys/crypto"
+	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 )
 
 // Signer extends crypto.Signer to provide more key metadata.
@@ -41,20 +41,20 @@ type Signer interface {
 // New returns a crypto.Signer backed by the named Google Cloud KMS key.
 func New(api *azkeys.Client, cred *azidentity.DefaultAzureCredential, name string) (Signer, error) {
 	ctx := context.Background()
-	resp, err := api.GetKey(ctx, name, nil)
+	resp, err := api.GetKey(ctx, name, "", nil)
 	if err != nil {
 		return nil, errors.WithMessage(err, "could not get key version from Azure Keyvault")
 	}
-	switch *resp.JSONWebKey.KeyType {
+	switch *resp.Key.Kty {
 	case azkeys.KeyTypeRSA:
 	case azkeys.KeyTypeRSAHSM:
 	default:
-		return nil, fmt.Errorf("unsupported key algorithm %q", *resp.Key.JSONWebKey.KeyType)
+		return nil, fmt.Errorf("unsupported key algorithm %q", *resp.Key.Kty)
 	}
 
-	creationTime := *resp.Properties.CreatedOn
+	creationTime := *resp.Attributes.Created
 
-	jwk := resp.JSONWebKey
+	jwk := resp.Key
 	if len(jwk.E) != 3 {
 		return nil, fmt.Errorf("unsupported exponent: %q", jwk.E)
 	}
@@ -65,12 +65,8 @@ func New(api *azkeys.Client, cred *azidentity.DefaultAzureCredential, name strin
 		E: E,
 		N: N,
 	}
-	capi, err := azcrypto.NewClient(*resp.JSONWebKey.ID, cred, nil)
-	if err != nil {
-		return nil, errors.WithMessage(err, "failed to create Crypto client")
-	}
 	return &kmsSigner{
-		api:          capi,
+		api:          api,
 		name:         name,
 		pubkey:       pubkeyRSA,
 		creationTime: creationTime,
@@ -78,7 +74,8 @@ func New(api *azkeys.Client, cred *azidentity.DefaultAzureCredential, name strin
 }
 
 type kmsSigner struct {
-	api          *azcrypto.Client
+	api          *azkeys.Client
+	id           string
 	name         string
 	pubkey       rsa.PublicKey
 	creationTime time.Time
@@ -101,7 +98,11 @@ func (k *kmsSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) 
 		return nil, fmt.Errorf("input digest must be valid SHA-256 hash")
 	}
 	ctx := context.Background()
-	sig, err := k.api.Sign(ctx, azcrypto.SignatureAlgorithmRS256, digest, nil)
+	signParams := azkeys.SignParameters{
+		Algorithm: to.Ptr(azkeys.SignatureAlgorithmRS256),
+		Value: digest,
+	}
+	sig, err := k.api.Sign(ctx, k.name, "", signParams, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "error signing with Azure Keyvault")
 	}
